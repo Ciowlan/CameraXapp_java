@@ -74,7 +74,7 @@ public class MainActivity extends AppCompatActivity {
 
     private GraphicOverlay graphicOverlay;
     private OverlayView overlayView;
-
+    private boolean isFrontCamera = false;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -96,7 +96,18 @@ public class MainActivity extends AppCompatActivity {
         cameraExecutor = Executors.newSingleThreadExecutor();
 
         ToggleButton facingSwitch = viewBinding.facingSwitch;
-        facingSwitch.setOnCheckedChangeListener(new Toggle());
+        facingSwitch.setOnCheckedChangeListener(new CompoundButton.OnCheckedChangeListener() {
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                if (isChecked) {
+                    cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+                } else {
+                    cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+                }
+                // 重新绑定相机预览
+               startCamera();
+            }
+        });
 
         // 初始化姿势估计器
         poseDetector = getPoseDetector();
@@ -230,8 +241,11 @@ public class MainActivity extends AppCompatActivity {
                         .build();
                 videoCapture = VideoCapture.withOutput(recorder);
 
-                // 选择后置摄像头作为默认摄像头
-                cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+
+                // 选择摄像头
+                cameraSelector = isFrontCamera ? CameraSelector.DEFAULT_FRONT_CAMERA
+                        : CameraSelector.DEFAULT_BACK_CAMERA;
+
 
                 // 创建拍照所需的实例
                 imageCapture = new ImageCapture.Builder().build();
@@ -274,10 +288,6 @@ public class MainActivity extends AppCompatActivity {
                 Log.e(Configuration.TAG, "用例绑定失败！" + e);
             }
         }, /*在主线程运行*/ContextCompat.getMainExecutor(this));
-
-
-
-
     }
 
     private boolean allPermissionsGranted() {
@@ -381,18 +391,18 @@ public class MainActivity extends AppCompatActivity {
             return rotationCompensation;
         }
 
-        private class Toggle implements CompoundButton.OnCheckedChangeListener{
-            @Override
-            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
-                if(isChecked)
-                {
-                    cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
-                }
-                else {
-                cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
-                    }
-            }
-        }
+//        private class Toggle implements CompoundButton.OnCheckedChangeListener{
+//            @Override
+//            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+//                if(isChecked)
+//                {
+//                    cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+//                }
+//                else {
+//                cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+//                    }
+//            }
+//        }
     private int frameCounter = 0;
     private int frameSkip = 15; // 每处理 15 帧，跳过一帧
     private class PoseAnalyzer implements ImageAnalysis.Analyzer {
