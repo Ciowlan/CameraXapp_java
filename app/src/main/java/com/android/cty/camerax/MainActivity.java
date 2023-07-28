@@ -2,15 +2,24 @@ package com.android.cty.camerax;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
+import android.app.Activity;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
 import android.util.Log;
+import android.util.SparseIntArray;
+import android.view.Surface;
+import android.widget.CompoundButton;
 import android.widget.Toast;
+import android.widget.ToggleButton;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageAnalysis;
@@ -32,9 +41,17 @@ import androidx.core.content.ContextCompat;
 
 import com.android.cty.camerax.databinding.ActivityMainBinding;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.pose.Pose;
+import com.google.mlkit.vision.pose.PoseDetection;
+import com.google.mlkit.vision.pose.PoseDetector;
+import com.google.mlkit.vision.pose.PoseLandmark;
+import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions;
+import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
 
-import java.io.File;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
@@ -51,6 +68,12 @@ public class MainActivity extends AppCompatActivity {
 
     private ExecutorService cameraExecutor;
 
+    CameraSelector cameraSelector;
+
+    private PoseDetector poseDetector;
+
+    private GraphicOverlay graphicOverlay;
+    private OverlayView overlayView;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -67,119 +90,124 @@ public class MainActivity extends AppCompatActivity {
         }
 
         // 设置拍照按钮监听
-        viewBinding.imageCaptureButton.setOnClickListener(v -> takePhoto());
+        //viewBinding.imageCaptureButton.setOnClickListener(v -> takePhoto());
         viewBinding.videoCaptureButton.setOnClickListener(v -> captureVideo());
 
         cameraExecutor = Executors.newSingleThreadExecutor();
 
+        ToggleButton facingSwitch = viewBinding.facingSwitch;
+        facingSwitch.setOnCheckedChangeListener(new Toggle());
+
+        // 初始化姿势估计器
+        poseDetector = getPoseDetector();
 
     }
-        @SuppressLint("CheckResult")
-        private void captureVideo() {
-            // 确保videoCapture 已经被实例化，否则程序可能崩溃
-            if (videoCapture != null) {
-                // 禁用UI，直到CameraX 完成请求
-                viewBinding.videoCaptureButton.setEnabled(false);
+    @SuppressLint("CheckResult")
+    private void captureVideo() {
+        // 确保videoCapture 已经被实例化，否则程序可能崩溃
+        if (videoCapture != null) {
+            // 禁用UI，直到CameraX 完成请求
+            viewBinding.videoCaptureButton.setEnabled(false);
 
-                Recording curRecording = recording;
-                if (curRecording != null) {
-                    // 如果正在录制，需要先停止当前的 recording session（录制会话）
-                    curRecording.stop();
-                    recording = null;
-                    return;
-                }
-
-                // 创建一个新的 recording session
-                // 首先，创建MediaStore VideoContent对象，用以设置录像通过MediaStore的方式保存
-                String name = new SimpleDateFormat(Configuration.FILENAME_FORMAT, Locale.SIMPLIFIED_CHINESE)
-                        .format(System.currentTimeMillis());
-                ContentValues contentValues = new ContentValues();
-                contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-                contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
-                if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                    contentValues.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video");
-                }
-
-                MediaStoreOutputOptions mediaStoreOutputOptions = new MediaStoreOutputOptions
-                        .Builder(getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
-                        .setContentValues(contentValues)
-                        .build();
-                // 申请音频权限
-                if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                    ActivityCompat.requestPermissions(this,
-                            new String[]{Manifest.permission.RECORD_AUDIO},
-                            Configuration.REQUEST_CODE_PERMISSIONS);
-                }
-                Recorder recorder = (Recorder) videoCapture.getOutput();
-                recording = recorder.prepareRecording(this, mediaStoreOutputOptions)
-                        .withAudioEnabled() // 开启音频录制
-                        // 开始新录制
-                        .start(ContextCompat.getMainExecutor(this), videoRecordEvent -> {
-                            if (videoRecordEvent instanceof VideoRecordEvent.Start) {
-                                viewBinding.videoCaptureButton.setText(getString(R.string.stop_capture));
-                                viewBinding.videoCaptureButton.setEnabled(true);// 启动录制时，切换按钮显示文本
-                            } else if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {//录制完成后，使用Toast通知
-                                if (!((VideoRecordEvent.Finalize) videoRecordEvent).hasError()) {
-                                    String msg = "Video capture succeeded: " +
-                                            ((VideoRecordEvent.Finalize) videoRecordEvent).getOutputResults()
-                                                    .getOutputUri();
-                                    Toast.makeText(getBaseContext(), msg, Toast.LENGTH_SHORT).show();
-                                    Log.d(Configuration.TAG, msg);
-                                } else {
-                                    if (recording != null) {
-                                        recording.close();
-                                        recording = null;
-                                        Log.e(Configuration.TAG, "Video capture end with error: " +
-                                                ((VideoRecordEvent.Finalize) videoRecordEvent).getError());
-                                    }
-                                }
-                                viewBinding.videoCaptureButton.setText(getString(R.string.start_capture));
-                                viewBinding.videoCaptureButton.setEnabled(true);
-                            }
-                        });
+            Recording curRecording = recording;
+            if (curRecording != null) {
+                // 如果正在录制，需要先停止当前的 recording session（录制会话）
+                curRecording.stop();
+                recording = null;
+                return;
             }
-        }
 
-
-    private void takePhoto() {
-        // 确保imageCapture 已经被实例化, 否则程序将可能崩溃
-        if (imageCapture != null) {
-            // 创建一个 "MediaStore Content" 以保存图片，带时间戳是为了保证文件名唯一
-            String name = new SimpleDateFormat(Configuration.FILENAME_FORMAT,
-                    Locale.SIMPLIFIED_CHINESE).format(System.currentTimeMillis());
+            // 创建一个新的 recording session
+            // 首先，创建MediaStore VideoContent对象，用以设置录像通过MediaStore的方式保存
+            String name = new SimpleDateFormat(Configuration.FILENAME_FORMAT, Locale.SIMPLIFIED_CHINESE)
+                    .format(System.currentTimeMillis());
             ContentValues contentValues = new ContentValues();
             contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
-            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4");
             if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+                contentValues.put(MediaStore.Video.Media.RELATIVE_PATH, "Movies/CameraX-Video");
             }
 
-            // 创建 output option 对象，用以指定照片的输出方式。
-            // 在这个对象中指定有关我们希望输出如何的方式。我们希望将输出保存在 MediaStore 中，以便其他应用可以显示它
-            ImageCapture.OutputFileOptions outputFileOptions = new ImageCapture.OutputFileOptions
-                    .Builder(getContentResolver(),
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    contentValues)
+            MediaStoreOutputOptions mediaStoreOutputOptions = new MediaStoreOutputOptions
+                    .Builder(getContentResolver(), MediaStore.Video.Media.EXTERNAL_CONTENT_URI)
+                    .setContentValues(contentValues)
                     .build();
-
-            // 设置拍照监听，用以在照片拍摄后执行takePicture（拍照）方法
-            imageCapture.takePicture(outputFileOptions,
-                    ContextCompat.getMainExecutor(this),
-                    new ImageCapture.OnImageSavedCallback() {// 保存照片时的回调
-                        @Override
-                        public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
-                            String msg = "照片捕获成功! " + outputFileResults.getSavedUri();
-                            Toast.makeText(getBaseContext(), msg, Toast.LENGTH_SHORT).show();
-                            Log.d(Configuration.TAG, msg);
-                        }
-
-                        @Override
-                        public void onError(@NonNull ImageCaptureException exception) {
-                            Log.e(Configuration.TAG, "Photo capture failed: " + exception.getMessage());// 拍摄或保存失败时
+            // 申请音频权限
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this,
+                        new String[]{Manifest.permission.RECORD_AUDIO},
+                        Configuration.REQUEST_CODE_PERMISSIONS);
+            }
+            Recorder recorder = (Recorder) videoCapture.getOutput();
+            recording = recorder.prepareRecording(this, mediaStoreOutputOptions)
+                    .withAudioEnabled() // 开启音频录制
+                    // 开始新录制
+                    .start(ContextCompat.getMainExecutor(this), videoRecordEvent -> {
+                        if (videoRecordEvent instanceof VideoRecordEvent.Start) {
+                            viewBinding.videoCaptureButton.setText(getString(R.string.stop_capture));
+                            viewBinding.videoCaptureButton.setEnabled(true);// 启动录制时，切换按钮显示文本
+                        } else if (videoRecordEvent instanceof VideoRecordEvent.Finalize) {//录制完成后，使用Toast通知
+                            if (!((VideoRecordEvent.Finalize) videoRecordEvent).hasError()) {
+                                String msg = "Video capture succeeded: " +
+                                        ((VideoRecordEvent.Finalize) videoRecordEvent).getOutputResults()
+                                                .getOutputUri();
+                                Toast.makeText(getBaseContext(), msg, Toast.LENGTH_SHORT).show();
+                                Log.d(Configuration.TAG, msg);
+                            } else {
+                                if (recording != null) {
+                                    recording.close();
+                                    recording = null;
+                                    Log.e(Configuration.TAG, "Video capture end with error: " +
+                                            ((VideoRecordEvent.Finalize) videoRecordEvent).getError());
+                                }
+                            }
+                            viewBinding.videoCaptureButton.setText(getString(R.string.start_capture));
+                            viewBinding.videoCaptureButton.setEnabled(true);
                         }
                     });
         }
     }
+
+
+//    private void takePhoto() {
+//        // 确保imageCapture 已经被实例化, 否则程序将可能崩溃
+//        if (imageCapture != null) {
+//            // 创建一个 "MediaStore Content" 以保存图片，带时间戳是为了保证文件名唯一
+//            String name = new SimpleDateFormat(Configuration.FILENAME_FORMAT,
+//                    Locale.SIMPLIFIED_CHINESE).format(System.currentTimeMillis());
+//            ContentValues contentValues = new ContentValues();
+//            contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, name);
+//            contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+//            if (Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
+//                contentValues.put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image");
+//            }
+//
+//            // 创建 output option 对象，用以指定照片的输出方式。
+//            // 在这个对象中指定有关我们希望输出如何的方式。我们希望将输出保存在 MediaStore 中，以便其他应用可以显示它
+//            ImageCapture.OutputFileOptions outputFileOptions = new ImageCapture.OutputFileOptions
+//                    .Builder(getContentResolver(),
+//                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+//                    contentValues)
+//                    .build();
+//
+//            // 设置拍照监听，用以在照片拍摄后执行takePicture（拍照）方法
+//            imageCapture.takePicture(outputFileOptions,
+//                    ContextCompat.getMainExecutor(this),
+//                    new ImageCapture.OnImageSavedCallback() {// 保存照片时的回调
+//                        @Override
+//                        public void onImageSaved(@NonNull ImageCapture.OutputFileResults outputFileResults) {
+//                            String msg = "照片捕获成功! " + outputFileResults.getSavedUri();
+//                            Toast.makeText(getBaseContext(), msg, Toast.LENGTH_SHORT).show();
+//                            Log.d(Configuration.TAG, msg);
+//                        }
+//
+//                        @Override
+//                        public void onError(@NonNull ImageCaptureException exception) {
+//                            Log.e(Configuration.TAG, "Photo capture failed: " + exception.getMessage());// 拍摄或保存失败时
+//                        }
+//                    });
+//        }
+//    }
 
     private void startCamera() {
         // 将Camera的生命周期和Activity绑定在一起（设定生命周期所有者），这样就不用手动控制相机的启动和关闭。
@@ -203,15 +231,33 @@ public class MainActivity extends AppCompatActivity {
                 videoCapture = VideoCapture.withOutput(recorder);
 
                 // 选择后置摄像头作为默认摄像头
-                CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+                cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
 
                 // 创建拍照所需的实例
                 imageCapture = new ImageCapture.Builder().build();
+
+                // 創建並設置graphicOverlay
+                graphicOverlay = new GraphicOverlay(this, null);
+                viewFinder.getOverlay().add(graphicOverlay);
+
+                // 創建overlayView並將其添加到graphicOverlay
+                overlayView = new OverlayView(
+                        graphicOverlay,
+                        null,
+                        false,
+                        false,
+                        false,
+                        null
+                );
+                graphicOverlay.add(overlayView);
 
                 // 设置预览帧分析
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
                         .build();
                 imageAnalysis.setAnalyzer(cameraExecutor, new MyAnalyzer());
+
+                // 设置图像分析回调
+                imageAnalysis.setAnalyzer(cameraExecutor, new PoseAnalyzer(overlayView));
 
                 // 重新绑定用例前先解绑
                 processCameraProvider.unbindAll();
@@ -290,5 +336,108 @@ public class MainActivity extends AppCompatActivity {
             image.close();
         }
     }
+
+    private PoseDetector getPoseDetector(){
+        AccuratePoseDetectorOptions options =
+                new AccuratePoseDetectorOptions.Builder()
+                        .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
+                        .build();
+        return PoseDetection.getClient(options);
+    }
+
+
+        private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
+        static {
+            ORIENTATIONS.append(Surface.ROTATION_0, 0);
+            ORIENTATIONS.append(Surface.ROTATION_90, 90);
+            ORIENTATIONS.append(Surface.ROTATION_180, 180);
+            ORIENTATIONS.append(Surface.ROTATION_270, 270);
+        }
+
+        /**
+         * Get the angle by which an image must be rotated given the device's current
+         * orientation.
+         */
+        @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+        private int getRotationCompensation(String cameraId, Activity activity, boolean isFrontFacing)
+                throws CameraAccessException {
+            // Get the device's current rotation relative to its "native" orientation.
+            // Then, from the ORIENTATIONS table, look up the angle the image must be
+            // rotated to compensate for the device's rotation.
+            int deviceRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+            int rotationCompensation = ORIENTATIONS.get(deviceRotation);
+
+            // Get the device's sensor orientation.
+            CameraManager cameraManager = (CameraManager) activity.getSystemService(CAMERA_SERVICE);
+            int sensorOrientation = cameraManager
+                    .getCameraCharacteristics(cameraId)
+                    .get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+            if (isFrontFacing) {
+                rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+            } else { // back-facing
+                rotationCompensation = (sensorOrientation - rotationCompensation + 360) % 360;
+            }
+            return rotationCompensation;
+        }
+
+        private class Toggle implements CompoundButton.OnCheckedChangeListener{
+            @Override
+            public void onCheckedChanged(CompoundButton buttonView, boolean isChecked) {
+                if(isChecked)
+                {
+                    cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+                }
+                else {
+                cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
+                    }
+            }
+        }
+    private int frameCounter = 0;
+    private int frameSkip = 15; // 每处理 15 帧，跳过一帧
+    private class PoseAnalyzer implements ImageAnalysis.Analyzer {
+
+        private OverlayView overlayView;
+
+        public PoseAnalyzer(OverlayView overlayView) {
+            this.overlayView = overlayView;
+        }
+
+        @Override
+        public void analyze(@NonNull ImageProxy imageProxy) {
+            // 每处理 frameSkip 帧，才进行图像处理
+            frameCounter++;
+            if (frameCounter % frameSkip != 0) {
+                imageProxy.close();
+                return;
+            }
+            // 获取图像数据
+            ImageProxy.PlaneProxy[] planes = imageProxy.getPlanes();
+            ByteBuffer buffer = planes[0].getBuffer();
+            int width = imageProxy.getWidth();
+            int height = imageProxy.getHeight();
+            int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();
+
+            // 创建InputImage对象
+            InputImage image = InputImage.fromByteBuffer(buffer, width, height, rotationDegrees,
+                    InputImage.IMAGE_FORMAT_NV21);
+
+            // 姿勢估計處理
+            poseDetector.process(image)
+                    .addOnSuccessListener(pose -> {
+                        // 成功獲取姿勢估計結果，繪製在OverlayView上
+                        graphicOverlay.clear(); // 清除先前的繪圖
+                        overlayView.setPose(pose);
+                        graphicOverlay.add(overlayView);
+                    })
+                    .addOnFailureListener(e -> {
+                        // 處理姿勢估計失敗的情況
+                        Log.e(Configuration.TAG, "Pose detection failed: " + e.getMessage());
+                    });
+
+            imageProxy.close();
+        }
+    }
+
 }
 
