@@ -20,12 +20,11 @@
 
     <com.android.cty.camerax.GraphicOverlay
         android:id="@+id/graphicOverlay"
-        android:layout_width="414dp"
-        android:layout_height="597dp"
+        android:layout_width="417dp"
+        android:layout_height="309dp"
         app:layout_constraintLeft_toLeftOf="@id/viewFinder"
         app:layout_constraintRight_toRightOf="@id/viewFinder"
-        app:layout_constraintTop_toTopOf="@id/viewFinder"
-        app:layout_constraintBottom_toBottomOf="@id/viewFinder"/>
+        app:layout_constraintTop_toTopOf="@id/viewFinder" />
 
 
     <Button

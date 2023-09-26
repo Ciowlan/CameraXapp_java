@@ -5,9 +5,9 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
-import android.hardware.camera2.CameraAccessException;
-import android.hardware.camera2.CameraCharacteristics;
-import android.hardware.camera2.CameraManager;
+
+import android.content.res.AssetManager;
+import android.graphics.PointF;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.MediaStore;
@@ -40,6 +40,9 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.android.cty.camerax.databinding.ActivityMainBinding;
+import com.google.android.gms.tasks.OnFailureListener;
+import com.google.android.gms.tasks.OnSuccessListener;
+import com.google.android.gms.tasks.Task;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.pose.Pose;
@@ -49,6 +52,11 @@ import com.google.mlkit.vision.pose.PoseLandmark;
 import com.google.mlkit.vision.pose.accurate.AccuratePoseDetectorOptions;
 import com.google.mlkit.vision.pose.defaults.PoseDetectorOptions;
 
+import java.io.BufferedReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.List;
@@ -56,9 +64,14 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import com.android.cty.camerax.classification.PoseClassifierProcessor;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 public class MainActivity extends AppCompatActivity {
-
+    private OverlayView overlayView;
     private ActivityMainBinding viewBinding;
 
     private ImageCapture imageCapture = null;
@@ -73,8 +86,14 @@ public class MainActivity extends AppCompatActivity {
     private PoseDetector poseDetector;
 
     private GraphicOverlay graphicOverlay;
-    private OverlayView overlayView;
     private boolean isFrontCamera = false;
+
+    private boolean camerastart = false;
+
+    // 在您的 Activity 或 Fragment 中的成员变量中创建一个 PoseClassifierProcessor 实例
+    private PoseClassifierProcessor poseClassifierProcessor;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -105,14 +124,22 @@ public class MainActivity extends AppCompatActivity {
                     cameraSelector = CameraSelector.DEFAULT_FRONT_CAMERA;
                 }
                 // 重新绑定相机预览
-               startCamera();
+                startCamera();
+                CamerUseCase();
+
             }
         });
 
         // 初始化姿势估计器
         poseDetector = getPoseDetector();
 
+        // 初始化 PoseClassifierProcessor，第二个参数表示是否为流模式
+        poseClassifierProcessor = null;
+
+
     }
+
+
     @SuppressLint("CheckResult")
     private void captureVideo() {
         // 确保videoCapture 已经被实例化，否则程序可能崩溃
@@ -254,16 +281,6 @@ public class MainActivity extends AppCompatActivity {
                 graphicOverlay = new GraphicOverlay(this, null);
                 viewFinder.getOverlay().add(graphicOverlay);
 
-                // 創建overlayView並將其添加到graphicOverlay
-                overlayView = new OverlayView(
-                        graphicOverlay,
-                        null,
-                        false,
-                        false,
-                        false,
-                        null
-                );
-                graphicOverlay.add(overlayView);
 
                 // 设置预览帧分析
                 ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
@@ -271,7 +288,7 @@ public class MainActivity extends AppCompatActivity {
                 imageAnalysis.setAnalyzer(cameraExecutor, new MyAnalyzer());
 
                 // 设置图像分析回调
-                imageAnalysis.setAnalyzer(cameraExecutor, new PoseAnalyzer(overlayView));
+                imageAnalysis.setAnalyzer(cameraExecutor, new PoseAnalyzer());
 
                 // 重新绑定用例前先解绑
                 processCameraProvider.unbindAll();
@@ -282,10 +299,11 @@ public class MainActivity extends AppCompatActivity {
                         imageCapture/*,
                         imageAnalysis*/,
                         videoCapture);
-
+                camerastart = true;
 
             } catch (Exception e) {
                 Log.e(Configuration.TAG, "用例绑定失败！" + e);
+                camerastart = false;
             }
         }, /*在主线程运行*/ContextCompat.getMainExecutor(this));
     }
@@ -306,6 +324,7 @@ public class MainActivity extends AppCompatActivity {
         cameraExecutor.shutdown();
     }
 
+    //存檔
     static class Configuration {
         public static final String TAG = "CameraxBasic";
         public static final String FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS";
@@ -348,8 +367,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private PoseDetector getPoseDetector(){
-        AccuratePoseDetectorOptions options =
-                new AccuratePoseDetectorOptions.Builder()
+
+        PoseDetectorOptions options =
+                new PoseDetectorOptions.Builder()
                         .setDetectorMode(PoseDetectorOptions.STREAM_MODE)
                         .build();
         return PoseDetection.getClient(options);
@@ -364,32 +384,32 @@ public class MainActivity extends AppCompatActivity {
             ORIENTATIONS.append(Surface.ROTATION_270, 270);
         }
 
-        /**
-         * Get the angle by which an image must be rotated given the device's current
-         * orientation.
-         */
-        @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
-        private int getRotationCompensation(String cameraId, Activity activity, boolean isFrontFacing)
-                throws CameraAccessException {
-            // Get the device's current rotation relative to its "native" orientation.
-            // Then, from the ORIENTATIONS table, look up the angle the image must be
-            // rotated to compensate for the device's rotation.
-            int deviceRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
-            int rotationCompensation = ORIENTATIONS.get(deviceRotation);
-
-            // Get the device's sensor orientation.
-            CameraManager cameraManager = (CameraManager) activity.getSystemService(CAMERA_SERVICE);
-            int sensorOrientation = cameraManager
-                    .getCameraCharacteristics(cameraId)
-                    .get(CameraCharacteristics.SENSOR_ORIENTATION);
-
-            if (isFrontFacing) {
-                rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
-            } else { // back-facing
-                rotationCompensation = (sensorOrientation - rotationCompensation + 360) % 360;
-            }
-            return rotationCompensation;
-        }
+//        /**
+//         * Get the angle by which an image must be rotated given the device's current
+//         * orientation.
+//         */
+//        @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
+//        private int getRotationCompensation(String cameraId, Activity activity, boolean isFrontFacing)
+//                throws CameraAccessException {
+//            // Get the device's current rotation relative to its "native" orientation.
+//            // Then, from the ORIENTATIONS table, look up the angle the image must be
+//            // rotated to compensate for the device's rotation.
+//            int deviceRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+//            int rotationCompensation = ORIENTATIONS.get(deviceRotation);
+//
+//            // Get the device's sensor orientation.
+//            CameraManager cameraManager = (CameraManager) activity.getSystemService(CAMERA_SERVICE);
+//            int sensorOrientation = cameraManager
+//                    .getCameraCharacteristics(cameraId)
+//                    .get(CameraCharacteristics.SENSOR_ORIENTATION);
+//
+//            if (isFrontFacing) {
+//                rotationCompensation = (sensorOrientation + rotationCompensation) % 360;
+//            } else { // back-facing
+//                rotationCompensation = (sensorOrientation - rotationCompensation + 360) % 360;
+//            }
+//            return rotationCompensation;
+//        }
 
 //        private class Toggle implements CompoundButton.OnCheckedChangeListener{
 //            @Override
@@ -403,24 +423,11 @@ public class MainActivity extends AppCompatActivity {
 //                    }
 //            }
 //        }
-    private int frameCounter = 0;
-    private int frameSkip = 15; // 每处理 15 帧，跳过一帧
     private class PoseAnalyzer implements ImageAnalysis.Analyzer {
-
-        private OverlayView overlayView;
-
-        public PoseAnalyzer(OverlayView overlayView) {
-            this.overlayView = overlayView;
-        }
 
         @Override
         public void analyze(@NonNull ImageProxy imageProxy) {
-            // 每处理 frameSkip 帧，才进行图像处理
-            frameCounter++;
-            if (frameCounter % frameSkip != 0) {
-                imageProxy.close();
-                return;
-            }
+
             // 获取图像数据
             ImageProxy.PlaneProxy[] planes = imageProxy.getPlanes();
             ByteBuffer buffer = planes[0].getBuffer();
@@ -432,20 +439,113 @@ public class MainActivity extends AppCompatActivity {
             InputImage image = InputImage.fromByteBuffer(buffer, width, height, rotationDegrees,
                     InputImage.IMAGE_FORMAT_NV21);
 
-            // 姿勢估計處理
+            // 进行姿势估计
             poseDetector.process(image)
                     .addOnSuccessListener(pose -> {
-                        // 成功獲取姿勢估計結果，繪製在OverlayView上
-                        graphicOverlay.clear(); // 清除先前的繪圖
-                        overlayView.setPose(pose);
-                        graphicOverlay.add(overlayView);
+                        // 创建一个 JSON 对象来存储坐标数据
+                        JSONObject jsonObject = new JSONObject();
+
+                        // 获取所有关节的坐标信息
+                        List<PoseLandmark> landmarks = pose.getAllPoseLandmarks();
+
+
+                        try {
+                            for (PoseLandmark landmark : landmarks) {
+                                int landmarkType = landmark.getLandmarkType();
+                                PointF landmarkPosition = landmark.getPosition();
+
+                                // 将 XYZ 坐标数据添加到 JSON 对象
+                                JSONArray coordinatesArray = new JSONArray();
+                                coordinatesArray.put(landmarkPosition.x);
+                                coordinatesArray.put(landmarkPosition.y);
+                                //coordinatesArray.put(landmarkPosition.z);
+
+                                jsonObject.put(Integer.toString(landmarkType), coordinatesArray);
+                            }
+
+                            // 将 JSON 对象保存为 JSON 文件
+                            saveJsonToFile(jsonObject.toString());
+
+                        } catch (JSONException e) {
+                            e.printStackTrace();
+                        }
+
+                        // TODO: 使用 poseResults 进行相关处理
                     })
                     .addOnFailureListener(e -> {
-                        // 處理姿勢估計失敗的情況
+                        // 处理姿势估计失败的情况
                         Log.e(Configuration.TAG, "Pose detection failed: " + e.getMessage());
                     });
 
             imageProxy.close();
+        }
+    private void saveJsonToFile(String jsonData) {
+        try {
+            // 创建一个 JSON 文件输出流
+            FileWriter fileWriter = new FileWriter("pose_data.json");
+
+            // 将 JSON 数据写入文件
+            fileWriter.write(jsonData);
+
+            // 关闭文件输出流
+            fileWriter.close();
+
+            // 文件保存成功
+        } catch (IOException e) {
+            e.printStackTrace();
+            // 处理文件保存失败
+        }
+    }
+
+    }
+
+    private void CamerUseCase(){
+            if(camerastart){
+
+                // 創建overlayView並將其添加到graphicOverlay
+
+                overlayView = new OverlayView(
+                        graphicOverlay,
+                        null,
+                        false,
+                        false,
+                        false,
+                        null
+                );
+                graphicOverlay.add(overlayView);
+
+            }
+    }
+    private void readCsvDataFromAssets() {
+        // 使用 AssetManager 打開 CSV 檔案
+        AssetManager assetManager = getAssets();
+        try {
+            // 指定 CSV 文件的路徑，這個路徑應該與 assets 目錄中的相對路徑一致
+            String csvFilePath = "pose/fitness_pose_samples.csv";
+
+            // 打開 CSV 文件的輸入流
+            InputStream inputStream = assetManager.open(csvFilePath);
+
+            // 使用 inputStream 來讀取 CSV 文件的內容
+            InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
+            BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
+
+            // 逐行讀取 CSV 數據
+            String line;
+            while ((line = bufferedReader.readLine()) != null) {
+                // 在這裡處理每一行的數據，您可以將數據解析為適當的數據結構
+                // 例如，您可以使用 String 的 split() 方法將每一行拆分為字段
+                String[] fields = line.split(",");
+                // 處理字段...
+            }
+
+            // 關閉流
+            bufferedReader.close();
+            inputStreamReader.close();
+            inputStream.close();
+        } catch (IOException e) {
+            // 處理異常
+            e.printStackTrace();
         }
     }
 

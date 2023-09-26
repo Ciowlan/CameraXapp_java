@@ -209,6 +209,9 @@ public class GraphicOverlay extends View {
         paint.setARGB(255, 255 - v, 255 - v, 255);
       }
     }
+
+    protected void onDraw(Canvas canvas) {
+    }
   }
 
   public GraphicOverlay(Context context, AttributeSet attrs) {

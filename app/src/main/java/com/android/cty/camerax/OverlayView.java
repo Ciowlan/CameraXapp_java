@@ -7,7 +7,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import com.google.mlkit.vision.common.PointF3D;
-import com.android.cty.camerax.GraphicOverlay;
 import com.android.cty.camerax.GraphicOverlay.Graphic;
 import com.google.mlkit.vision.pose.Pose;
 import com.google.mlkit.vision.pose.PoseLandmark;
@@ -40,7 +39,7 @@ public class OverlayView extends Graphic {
 
     public void setPose(Pose pose) {
         this.pose = pose;
-        postInvalidate(); // 更新姿勢後刷新視圖
+
     }
     OverlayView(
             GraphicOverlay overlay,
@@ -50,6 +49,10 @@ public class OverlayView extends Graphic {
             boolean rescaleZForVisualization,
             List<String> poseClassification) {
         super(overlay);
+        // 添加 null 检查
+        if (pose == null) {
+            throw new IllegalArgumentException("Pose cannot be null.");
+        }
         this.pose = pose;
         this.showInFrameLikelihood = showInFrameLikelihood;
         this.visualizeZ = visualizeZ;
@@ -80,9 +83,6 @@ public class OverlayView extends Graphic {
             return;
         }
 
-        // 更新 poseLandmarks
-        poseLandmarks = pose.getAllPoseLandmarks();
-
         // Draw pose classification text.
         float classificationX = POSE_CLASSIFICATION_TEXT_SIZE * 0.5f;
         for (int i = 0; i < poseClassification.size(); i++) {
@@ -102,17 +102,17 @@ public class OverlayView extends Graphic {
             }
         }
 
-        PoseLandmark nose = pose.getPoseLandmark(PoseLandmark.NOSE);
-        PoseLandmark lefyEyeInner = pose.getPoseLandmark(PoseLandmark.LEFT_EYE_INNER);
-        PoseLandmark lefyEye = pose.getPoseLandmark(PoseLandmark.LEFT_EYE);
-        PoseLandmark leftEyeOuter = pose.getPoseLandmark(PoseLandmark.LEFT_EYE_OUTER);
-        PoseLandmark rightEyeInner = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE_INNER);
-        PoseLandmark rightEye = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE);
-        PoseLandmark rightEyeOuter = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE_OUTER);
-        PoseLandmark leftEar = pose.getPoseLandmark(PoseLandmark.LEFT_EAR);
-        PoseLandmark rightEar = pose.getPoseLandmark(PoseLandmark.RIGHT_EAR);
-        PoseLandmark leftMouth = pose.getPoseLandmark(PoseLandmark.LEFT_MOUTH);
-        PoseLandmark rightMouth = pose.getPoseLandmark(PoseLandmark.RIGHT_MOUTH);
+        //PoseLandmark nose = pose.getPoseLandmark(PoseLandmark.NOSE);
+        //PoseLandmark lefyEyeInner = pose.getPoseLandmark(PoseLandmark.LEFT_EYE_INNER);
+        //PoseLandmark lefyEye = pose.getPoseLandmark(PoseLandmark.LEFT_EYE);
+        //PoseLandmark leftEyeOuter = pose.getPoseLandmark(PoseLandmark.LEFT_EYE_OUTER);
+        //PoseLandmark rightEyeInner = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE_INNER);
+        //PoseLandmark rightEye = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE);
+        //PoseLandmark rightEyeOuter = pose.getPoseLandmark(PoseLandmark.RIGHT_EYE_OUTER);
+        //PoseLandmark leftEar = pose.getPoseLandmark(PoseLandmark.LEFT_EAR);
+        //PoseLandmark rightEar = pose.getPoseLandmark(PoseLandmark.RIGHT_EAR);
+        //PoseLandmark leftMouth = pose.getPoseLandmark(PoseLandmark.LEFT_MOUTH);
+        //PoseLandmark rightMouth = pose.getPoseLandmark(PoseLandmark.RIGHT_MOUTH);
 
         PoseLandmark leftShoulder = pose.getPoseLandmark(PoseLandmark.LEFT_SHOULDER);
         PoseLandmark rightShoulder = pose.getPoseLandmark(PoseLandmark.RIGHT_SHOULDER);
@@ -139,15 +139,15 @@ public class OverlayView extends Graphic {
         PoseLandmark rightFootIndex = pose.getPoseLandmark(PoseLandmark.RIGHT_FOOT_INDEX);
 
         // Face
-        drawLine(canvas, nose, lefyEyeInner, whitePaint);
-        drawLine(canvas, lefyEyeInner, lefyEye, whitePaint);
-        drawLine(canvas, lefyEye, leftEyeOuter, whitePaint);
-        drawLine(canvas, leftEyeOuter, leftEar, whitePaint);
-        drawLine(canvas, nose, rightEyeInner, whitePaint);
-        drawLine(canvas, rightEyeInner, rightEye, whitePaint);
-        drawLine(canvas, rightEye, rightEyeOuter, whitePaint);
-        drawLine(canvas, rightEyeOuter, rightEar, whitePaint);
-        drawLine(canvas, leftMouth, rightMouth, whitePaint);
+//        drawLine(canvas, nose, lefyEyeInner, whitePaint);
+//        drawLine(canvas, lefyEyeInner, lefyEye, whitePaint);
+//        drawLine(canvas, lefyEye, leftEyeOuter, whitePaint);
+//        drawLine(canvas, leftEyeOuter, leftEar, whitePaint);
+//        drawLine(canvas, nose, rightEyeInner, whitePaint);
+//        drawLine(canvas, rightEyeInner, rightEye, whitePaint);
+//        drawLine(canvas, rightEye, rightEyeOuter, whitePaint);
+//        drawLine(canvas, rightEyeOuter, rightEar, whitePaint);
+//        drawLine(canvas, leftMouth, rightMouth, whitePaint);
 
         drawLine(canvas, leftShoulder, rightShoulder, whitePaint);
         drawLine(canvas, leftHip, rightHip, whitePaint);
